@@ -995,8 +995,6 @@
         }
 
         // --- 2b. IDENTITY: LOGIN / CREATE ACCOUNT + OWNER SYSTEM ---
-        const KVDB_BUCKET = 'XWGMfjDCY2EA8dzTfM51xt';
-        const KVDB_BASE = `https://kvdb.io/${KVDB_BUCKET}`;
         const OWNER_USER = 'william';
         const OWNER_PASS = 'Owner213';
         // Bump this whenever the auth schema changes — anyone logged in under an
@@ -1041,24 +1039,31 @@
             el.classList.remove('hidden');
         }
 
-        // --- KVdb helpers (used only for account storage now) ---
-        async function kvGet(key) {
+        // --- ACCOUNT STORAGE (localStorage — works offline, no external API needed) ---
+        // Accounts are stored per-browser under the key 'hub_accounts' as a JSON object.
+        // Format: { "ACCOUNTKEY": { name, password, created } }
+        function getAccounts() {
             try {
-                const res = await fetch(`${KVDB_BASE}/${key}`);
-                if (!res.ok) return null;
-                const text = await res.text();
-                try { return JSON.parse(text); } catch(e) { return null; }
-            } catch (e) { return null; }
+                const raw = localStorage.getItem('hub_accounts');
+                return raw ? JSON.parse(raw) : {};
+            } catch(e) { return {}; }
         }
-        async function kvSet(key, value) {
-            try {
-                await fetch(`${KVDB_BASE}/${key}`, { method: 'POST', body: JSON.stringify(value) });
-                return true;
-            } catch (e) { return false; }
+        function saveAccounts(accounts) {
+            try { localStorage.setItem('hub_accounts', JSON.stringify(accounts)); } catch(e) {}
         }
-
         function accountKey(name) {
-            return `account-${name.toLowerCase().replace(/[^a-z0-9_-]/g, '')}`;
+            return name.toUpperCase().trim().replace(/[^A-Z0-9_-]/g, '');
+        }
+        function getAccount(name) {
+            return getAccounts()[accountKey(name)] || null;
+        }
+        function createAccount(name, password) {
+            const accounts = getAccounts();
+            const key = accountKey(name);
+            if (accounts[key]) return false; // already exists
+            accounts[key] = { name: name.toUpperCase(), password: password.toUpperCase(), created: new Date().toISOString() };
+            saveAccounts(accounts);
+            return true;
         }
 
         // --- THEME SYSTEM ---
@@ -1100,7 +1105,7 @@
         }
 
         // --- Auth submit handlers ---
-        async function submitLogin() {
+        function submitLogin() {
             const nameField = document.getElementById('login-name-field');
             const passField = document.getElementById('login-password-field');
             const name = (nameField.value || '').trim().toUpperCase();
@@ -1111,21 +1116,21 @@
                 return;
             }
 
-            // Hardcoded owner login, independent of KVdb-stored accounts.
+            // Owner login (hardcoded, independent of stored accounts)
             if (name === OWNER_USER.toUpperCase() && pass === OWNER_PASS.toUpperCase()) {
                 completeLogin(name, true);
                 return;
             }
 
-            const account = await kvGet(accountKey(name));
-            if (account && (account.password || '').toUpperCase() === pass) {
-                completeLogin(account.name || name, false);
+            const account = getAccount(name);
+            if (account && account.password === pass) {
+                completeLogin(account.name, false);
             } else {
                 showAuthError('login', currentLang === 'es-LA' ? 'Nombre o contraseña incorrectos.' : 'Incorrect name or password.');
             }
         }
 
-        async function submitCreateAccount() {
+        function submitCreateAccount() {
             const nameField = document.getElementById('create-name-field');
             const passField = document.getElementById('create-password-field');
             const name = (nameField.value || '').trim().toUpperCase();
@@ -1139,14 +1144,16 @@
                 showAuthError('create', currentLang === 'es-LA' ? 'Ese nombre está reservado.' : 'That name is reserved.');
                 return;
             }
-
-            const existing = await kvGet(accountKey(name));
-            if (existing) {
+            if (getAccount(name)) {
                 showAuthError('create', currentLang === 'es-LA' ? 'Esa cuenta ya existe. Usa Iniciar Sesión.' : 'That account already exists. Use Log In instead.');
                 return;
             }
 
-            await kvSet(accountKey(name), { name: name, password: pass, created: new Date().toISOString() });
+            const success = createAccount(name, pass);
+            if (!success) {
+                showAuthError('create', currentLang === 'es-LA' ? 'Error al crear la cuenta. Intenta de nuevo.' : 'Could not create account. Try again.');
+                return;
+            }
             completeLogin(name, false);
         }
 
